@@ -1,9 +1,49 @@
 import SwiftUI
 
+#if os(macOS)
 struct NetworkTab: View {
     @ObservedObject var viewModel: VPNViewModel
     @ObservedObject private var service = RustunClientService.shared
-    @State private var clients: [ClientInfo] = []
+    
+    // 判断当前配置是否是连接的配置
+    private var isCurrentConfig: Bool {
+        service.isCurrentConnect(id: viewModel.config.id)
+    }
+    
+    // 获取显示的状态
+    private var displayStatus: VPNStatus {
+        if isCurrentConfig {
+            return service.status
+        } else {
+            return .disconnected
+        }
+    }
+    
+    // 将 peers 转换为 ClientInfo
+    private var clients: [ClientInfo] {
+        if isCurrentConfig {
+            return service.peers.map { peer in
+                ClientInfo(
+                    identity: peer.identity,
+                    privateIP: peer.privateIP,
+                    cidrs: peer.ciders,
+                    isP2P: !peer.ipv6.isEmpty && peer.port > 0,
+                    lastActive: peer.lastActive
+                )
+            }
+        } else {
+            return []
+        }
+    }
+    
+    // 获取显示的统计数据
+    private var displayStats: VPNStats {
+        if isCurrentConfig {
+            return service.stats
+        } else {
+            return VPNStats()
+        }
+    }
     
     var body: some View {
         ScrollView {
@@ -12,7 +52,7 @@ struct NetworkTab: View {
                     VPNCard(viewModel: viewModel)
                         .frame(maxWidth: 350)
                     
-                    StatisticsCard()
+                    StatisticsCard(stats: displayStats)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
@@ -30,11 +70,11 @@ struct NetworkTab: View {
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(Color(NSColor.separatorColor).opacity(0.3))
+                            .background(PlatformColors.separator.opacity(0.3))
                             .cornerRadius(6)
                     }
                     
-                    if service.status == .connected {
+                    if displayStatus == .connected {
                         let displayClients = clients
                         
                         if displayClients.isEmpty {
@@ -54,11 +94,11 @@ struct NetworkTab: View {
                             .padding(.vertical, 48)
                             .background(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color(NSColor.controlBackgroundColor))
+                                    .fill(PlatformColors.controlBackground)
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+                                    .stroke(PlatformColors.separator, lineWidth: 1)
                             )
                         } else {
                             // Clients grid
@@ -88,11 +128,11 @@ struct NetworkTab: View {
                         .padding(.vertical, 48)
                         .background(
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(NSColor.controlBackgroundColor))
+                                .fill(PlatformColors.controlBackground)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+                                .stroke(PlatformColors.separator, lineWidth: 1)
                         )
                     }
                 }
@@ -100,6 +140,25 @@ struct NetworkTab: View {
                 .padding(.bottom, 16)
             }
         }
+        .onAppear {
+            // 初始加载 peers
+            if displayStatus == .connected && isCurrentConfig {
+                service.requestPeersFromProvider()
+            }
+        }
+        .onChange(of: service.status) { newStatus in
+            if newStatus == .connected && isCurrentConfig {
+                service.requestPeersFromProvider()
+            }
+        }
+        .onChange(of: viewModel.config.id) { _ in
+            // 切换配置时，如果是当前连接的配置，刷新 peers
+            if isCurrentConfig && displayStatus == .connected {
+                service.requestPeersFromProvider()
+            }
+        }
     }
 }
+
+#endif
 

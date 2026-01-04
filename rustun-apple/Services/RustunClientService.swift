@@ -6,6 +6,7 @@ import NetworkExtension
 class RustunClientService: ObservableObject {
     @Published var status: VPNStatus = .disconnected
     @Published var stats: VPNStats = VPNStats()
+    @Published var peers: [PeerDetail] = []
     @Published var logs: [String] = []
     @Published var errorMessage: String?
     
@@ -13,6 +14,10 @@ class RustunClientService: ObservableObject {
     private var statsTimer: Timer?
     private var connectTime: Date?
     private var statusObserver: NSObjectProtocol?
+    
+    private var config: VPNConfig?
+    private var pendingConnectConfig: VPNConfig?
+    private var statusCancellable: AnyCancellable?
     
     static let shared = RustunClientService()
     
@@ -28,10 +33,22 @@ class RustunClientService: ObservableObject {
     }
     
     func connect(with config: VPNConfig) {
-        guard status == .disconnected else {
-            errorMessage = "Already connected or connecting"
-            return
+        // 如果当前已连接，且是不同配置，先断开
+        if status != .disconnected {
+            if let currentConfig = self.config, currentConfig.id != config.id {
+                // 断开当前连接，然后连接新配置
+                disconnectAndConnect(config)
+                return
+            } else if status == .connecting {
+                errorMessage = "Already connecting"
+                return
+            } else if status == .connected {
+                // 已经是同一个配置，不需要重新连接
+                return
+            }
         }
+        
+        self.config = config
         
         status = .connecting
         errorMessage = nil
@@ -92,8 +109,35 @@ class RustunClientService: ObservableObject {
         statsTimer?.invalidate()
         statsTimer = nil
         connectTime = nil
+        self.config = nil
         
         addLog("✅ Disconnected")
+    }
+    
+    /// Disconnect current connection and connect to new config
+    private func disconnectAndConnect(_ newConfig: VPNConfig) {
+        addLog("🔄 Switching VPN connection...")
+        
+        // Store the new config to connect after disconnection
+        pendingConnectConfig = newConfig
+        
+        // Observe status changes to connect when disconnected
+        statusCancellable = $status
+            .dropFirst() // Skip current status
+            .sink { [weak self] newStatus in
+                guard let self = self else { return }
+                
+                if newStatus == .disconnected, let config = self.pendingConnectConfig {
+                    // Disconnected, now connect to new config
+                    self.pendingConnectConfig = nil
+                    self.statusCancellable?.cancel()
+                    self.statusCancellable = nil
+                    self.connect(with: config)
+                }
+            }
+        
+        // Start disconnection
+        disconnect()
     }
     
     /// Create or update tunnel manager with configuration
@@ -296,6 +340,43 @@ class RustunClientService: ObservableObject {
             }
         } catch {
         }
+        
+        // Also request peers
+        requestPeersFromProvider()
+    }
+    
+    /// Request peers list from tunnel provider
+    func requestPeersFromProvider() {
+        guard let manager = tunnelManager,
+              let session = manager.connection as? NETunnelProviderSession,
+              session.status == .connected else {
+            return
+        }
+        
+        // Send message to tunnel provider to request peers
+        let message = ["action": "getPeers"]
+        guard let messageData = try? JSONSerialization.data(withJSONObject: message) else {
+            return
+        }
+        
+        do {
+            try session.sendProviderMessage(messageData) { [weak self] responseData in
+                guard let self = self,
+                      let data = responseData else {
+                    return
+                }
+                
+                let decoder = JSONDecoder()
+                if let peersList = try? decoder.decode([PeerDetail].self, from: data) {
+                    DispatchQueue.main.async {
+                        self.peers = peersList
+                        self.addLog("👥 Updated peers: \(peersList.count) peers")
+                    }
+                }
+            }
+        } catch {
+            addLog("❌ Failed to request peers: \(error.localizedDescription)")
+        }
     }
     
     /// Add log entry
@@ -308,6 +389,11 @@ class RustunClientService: ObservableObject {
         if logs.count > 1000 {
             logs.removeFirst(logs.count - 1000)
         }
+    }
+    
+    func isCurrentConnect(id: UUID) -> Bool {
+        guard let config = self.config else {return false}
+        return config.id == id
     }
 }
 

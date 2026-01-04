@@ -1,38 +1,24 @@
 import SwiftUI
+#if os(macOS)
 
-struct EditVPNSheet: View {
+struct AddVPNSheet: View {
     @ObservedObject var viewModel: VPNViewModel
     @Environment(\.dismiss) private var dismiss
     
-    let config: VPNConfig
     let onSave: (VPNConfig) -> Void
     
-    @State private var name: String
-    @State private var serverAddress: String
-    @State private var serverPort: Int
-    @State private var identity: String
-    @State private var cryptoType: CryptoType
-    @State private var cryptoKey: String
-    
-    init(viewModel: VPNViewModel, config: VPNConfig, onSave: @escaping (VPNConfig) -> Void) {
-        self.viewModel = viewModel
-        self.config = config
-        self.onSave = onSave
-        
-        // Initialize state from existing config
-        _name = State(initialValue: config.name)
-        _serverAddress = State(initialValue: config.serverAddress)
-        _serverPort = State(initialValue: config.serverPort)
-        _identity = State(initialValue: config.identity)
-        _cryptoType = State(initialValue: config.cryptoType)
-        _cryptoKey = State(initialValue: config.cryptoKey)
-    }
+    @State private var name: String = "Rustun"
+    @State private var serverAddress: String = ""
+    @State private var serverPort: Int = 8080
+    @State private var identity: String = ""
+    @State private var cryptoType: CryptoType = .chacha20
+    @State private var cryptoKey: String = ""
     
     var body: some View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Edit VPN")
+                Text("New VPN")
                     .font(.title2)
                     .fontWeight(.semibold)
                 Spacer()
@@ -64,8 +50,8 @@ struct EditVPNSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
                 
-                Button("Save") {
-                    saveVPN()
+                Button("Add") {
+                    addVPN()
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
@@ -80,40 +66,30 @@ struct EditVPNSheet: View {
         !name.isEmpty && !serverAddress.isEmpty && !identity.isEmpty
     }
     
-    private func saveVPN() {
-        let updatedConfig = VPNConfig(
-            id: config.id,
+    private func addVPN() {
+        let config = VPNConfig(
             name: name,
             serverAddress: serverAddress,
             serverPort: serverPort,
             identity: identity,
             cryptoType: cryptoType,
             cryptoKey: cryptoKey,
-            enableP2P: config.enableP2P,
-            keepaliveInterval: config.keepaliveInterval
+            enableP2P: true,
+            keepaliveInterval: 10  
         )
         
-        viewModel.config = updatedConfig
+        viewModel.config = config
         viewModel.saveConfig()
-        onSave(updatedConfig)
+        onSave(config)
         dismiss()
     }
 }
 
 #Preview {
-    EditVPNSheet(
+    AddVPNSheet(
         viewModel: VPNViewModel(),
-        config: VPNConfig(
-            name: "Test Server",
-            serverAddress: "192.168.1.100",
-            serverPort: 8080,
-            identity: "test-client",
-            cryptoType: .chacha20,
-            cryptoKey: "secret",
-            enableP2P: true,
-            keepaliveInterval: 10
-        ),
         onSave: { _ in }
     )
 }
 
+#endif

@@ -1,5 +1,6 @@
 import SwiftUI
 
+#if os(macOS)
 struct SidebarView: View {
     @ObservedObject var viewModel: VPNViewModel
     @ObservedObject private var service = RustunClientService.shared
@@ -8,13 +9,22 @@ struct SidebarView: View {
     @State private var showingAddSheet = false
     @State private var showingEditSheet = false
     
+    // 获取配置的状态
+    private func getStatus(for config: VPNConfig) -> VPNStatus {
+        // 只有当前配置真正连接时，才返回连接状态
+        if service.isCurrentConnect(id: config.id) {
+            return service.status
+        }
+        return .disconnected
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             List(selection: $selectedConfigId) {
                 ForEach(viewModel.savedConfigs) { config in
                     VPNConfigRow(
                         config: config,
-                        isActive: service.status == .connected && viewModel.config.id == config.id
+                        status: getStatus(for: config)
                     )
                     .tag(config.id)
                 }
@@ -114,7 +124,8 @@ struct SidebarToolbar: View {
             .help("Edit VPN")
         }
         .padding(8)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(PlatformColors.controlBackground)
     }
 }
+#endif
 

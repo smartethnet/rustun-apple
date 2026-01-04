@@ -1,5 +1,8 @@
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+
 @main
 struct rustun_appleApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -52,3 +55,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 }
+
+#elseif os(iOS)
+
+@main
+struct rustun_appleApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+
+#endif

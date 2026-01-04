@@ -1,8 +1,23 @@
 import SwiftUI
 
+#if os(macOS)
 struct VPNCard: View {
     @ObservedObject var viewModel: VPNViewModel
     @ObservedObject private var service = RustunClientService.shared
+    
+    // 判断当前配置是否是连接的配置
+    private var isCurrentConfig: Bool {
+        service.isCurrentConnect(id: viewModel.config.id)
+    }
+    
+    // 获取显示的状态
+    private var displayStatus: VPNStatus {
+        if isCurrentConfig {
+            return service.status
+        } else {
+            return .disconnected
+        }
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -22,13 +37,8 @@ struct VPNCard: View {
                         .frame(width: 8, height: 8)
                         .shadow(color: statusColor.opacity(0.5), radius: 2)
                     
-                    Text(service.status.rawValue)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(statusColor)
-                    
                     // Connection Time
-                    if service.status == .connected {
+                    if displayStatus == .connected && isCurrentConfig {
                         Text("·")
                             .foregroundColor(.secondary)
                         Text(service.stats.formattedConnectedTime)
@@ -39,13 +49,13 @@ struct VPNCard: View {
                 
                 // Toggle Switch (Small)
                 Toggle("", isOn: Binding(
-                    get: { service.status == .connected },
+                    get: { displayStatus == .connected && isCurrentConfig },
                     set: { _ in viewModel.toggleConnection() }
                 ))
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .labelsHidden()
-                .disabled(service.status == .connecting)
+                .disabled(displayStatus == .connecting)
             }
             
             // Server Address
@@ -95,7 +105,7 @@ struct VPNCard: View {
             }
         }
         .padding(16)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(PlatformColors.controlBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(borderColor, lineWidth: 1.5)
@@ -104,7 +114,7 @@ struct VPNCard: View {
     }
     
     private var statusColor: Color {
-        switch service.status {
+        switch displayStatus {
         case .connected: return .green
         case .connecting: return .blue
         case .error: return .red
@@ -113,12 +123,13 @@ struct VPNCard: View {
     }
     
     private var borderColor: Color {
-        switch service.status {
+        switch displayStatus {
         case .connected: return .green.opacity(0.5)
         case .connecting: return .blue.opacity(0.5)
         case .error: return .red.opacity(0.5)
-        case .disconnected: return Color(NSColor.separatorColor)
+        case .disconnected: return PlatformColors.separator
         }
     }
 }
+#endif
 

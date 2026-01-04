@@ -4,51 +4,160 @@ import Darwin
 
 class PacketTunnelProvider: NEPacketTunnelProvider {
     
-    private var stats: [String: Any] = [
-        "rxBytes": 0,
-        "txBytes": 0,
-        "rxPackets": 0,
-        "txPackets": 0
+    private var stats: [String: UInt64] = [
+        "rxBytes": UInt64(0),
+        "txBytes": UInt64(0),
+        "rxPackets": UInt64(0),
+        "txPackets": UInt64(0)
     ]
     private var isReadingPackets = false
+    private var rustunClient: RustunClient?
+    private var handshakeReply: HandshakeReplyFrame?
+    private var currentPeers: [PeerDetail] = []
     
     override init() {
         super.init()
-        log(.info,"Initialing tunnel provider")
+        log(.info, "Initializing tunnel provider")
     }
     
     override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         log(.info, "Starting tunnel...")
         
-        // Get server address from configuration
-        var serverAddress = "127.0.0.1"
-        if let protocolConfig = protocolConfiguration as? NETunnelProviderProtocol {
-            if let address = protocolConfig.serverAddress {
-                serverAddress = address
-            }
+        // Get configuration from protocolConfiguration
+        guard let protocolConfig = protocolConfiguration as? NETunnelProviderProtocol,
+              let providerConfig = protocolConfig.providerConfiguration as? [String: Any] else {
+            let error = NSError(domain: "PacketTunnelProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid protocol configuration"])
+            log(.error, "Invalid protocol configuration")
+            completionHandler(error)
+            return
         }
         
-        // Setup basic tunnel network settings
-        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
+        // Extract rustun configuration
+        guard let serverAddress = providerConfig["serverAddress"] as? String,
+              let serverPort = providerConfig["serverPort"] as? Int,
+              let identity = providerConfig["identity"] as? String,
+              let cryptoType = providerConfig["cryptoType"] as? String,
+              let cryptoKey = providerConfig["cryptoKey"] as? String else {
+            let error = NSError(domain: "PacketTunnelProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Missing required rustun configuration"])
+            log(.error, "Missing required rustun configuration")
+            completionHandler(error)
+            return
+        }
         
-        // Configure virtual IP address
-        // Using a default private IP range
-        let ipv4Settings = NEIPv4Settings(addresses: ["10.0.0.2"], subnetMasks: ["255.255.255.0"])
-        settings.ipv4Settings = ipv4Settings
+        let keepaliveInterval = providerConfig["keepaliveInterval"] as? Int ?? 10
+        let cryptoConfig = "\(cryptoType):\(cryptoKey)"
         
-        // Configure DNS
-        settings.dnsSettings = NEDNSSettings(servers: ["8.8.8.8", "8.8.4.4"])
+        log(.info, "Connecting to rustun server: \(serverAddress):\(serverPort)")
+        log(.info, "Identity: \(identity)")
         
-        // Set tunnel network settings
-        setTunnelNetworkSettings(settings) { [weak self] error in
+        // Create rustun client
+        let client = RustunClient(
+            serverAddress: serverAddress,
+            serverPort: UInt16(serverPort),
+            identity: identity,
+            cryptoConfig: cryptoConfig,
+            keepaliveInterval: TimeInterval(keepaliveInterval)
+        )
+        
+        // Setup callbacks
+        var connectionCompletionHandler: ((Error?) -> Void)? = completionHandler
+    
+        
+        client.onHandshakeReply = { [weak self] reply in
+            guard let self = self else { return }
+            self.handleHandshakeReply(reply)
+        }
+        
+        client.onDataFrame = { [weak self] dataFrame in
+            guard let self = self else { return }
+            self.handleDataFrame(dataFrame)
+        }
+        
+        client.onKeepAlive = { [weak self] keepAlive in
+            guard let self = self else { return }
+            self.currentPeers = keepAlive.peerDetails
+            log(.debug, "Updated peers from keepalive: \(keepAlive.peerDetails.count) peers")
+        }
+        
+        self.rustunClient = client
+        
+        // Set temporary tunnel settings first (required by Network Extension)
+        let tempSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: serverAddress)
+        let tempIPv4Settings = NEIPv4Settings(addresses: ["127.0.0.100"], subnetMasks: ["255.255.255.0"])
+        tempSettings.ipv4Settings = tempIPv4Settings
+        tempSettings.dnsSettings = NEDNSSettings(servers: ["8.8.8.8", "8.8.4.4"])
+        tempSettings.mtu = 1430
+        
+        setTunnelNetworkSettings(tempSettings) { [weak self] error in
             guard let self = self else {
                 completionHandler(NSError(domain: "PacketTunnelProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Self is nil"]))
                 return
             }
             
             if let error = error {
-                log(.error, "Failed to set tunnel settings: \(error.localizedDescription)")
+                log(.error, "Failed to set temporary tunnel settings: \(error.localizedDescription)")
                 completionHandler(error)
+                return
+            }
+            
+            // Connect to server
+            client.run(onReady: { error in
+                if let error = error {
+                    log(.error, "Failed to connect: \(error.localizedDescription)")
+                    completionHandler(error)
+                }
+            })
+            // Handshake reply will update the tunnel settings and complete the connection
+            // For now, we complete immediately and let handshake reply update settings
+            completionHandler(nil)
+        }
+    }
+    
+    private func handleHandshakeReply(_ reply: HandshakeReplyFrame) {
+        log(.info, "Received handshake reply: privateIP=\(reply.privateIP), gateway=\(reply.gateway)")
+        self.handshakeReply = reply
+        self.currentPeers = reply.peerDetails
+        log(.info, "Initial peers: \(reply.peerDetails.count) peers")
+        
+        // Configure tunnel network settings based on handshake reply
+        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: reply.gateway)
+        
+        // Parse subnet mask
+        let mask = parseSubnetMask(reply.mask)
+        let ipv4Settings = NEIPv4Settings(addresses: [reply.privateIP], subnetMasks: [mask])
+        
+        // Add routes from peer details
+        var routes: [NEIPv4Route] = []
+        
+        // Add route to gateway
+        if let gatewayRoute = createRoute(to: reply.gateway, mask: mask) {
+            routes.append(gatewayRoute)
+        }
+        
+        // Add routes for peer CIDRs
+        for peer in reply.peerDetails {
+            for cidr in peer.ciders {
+                if let route = parseCIDRRoute(cidr) {
+                    routes.append(route)
+                }
+            }
+        }
+        
+        if !routes.isEmpty {
+            ipv4Settings.includedRoutes = routes
+        }
+        
+        settings.ipv4Settings = ipv4Settings
+        
+        // Configure DNS
+        settings.dnsSettings = NEDNSSettings(servers: ["8.8.8.8", "8.8.4.4"])
+        
+        // Update tunnel settings
+        setTunnelNetworkSettings(settings) { [weak self] error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                log(.error, "Failed to set tunnel settings: \(error.localizedDescription)")
                 return
             }
             
@@ -60,15 +169,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 self.isReadingPackets = true
                 self.readTunnel(packetFlow: self.packetFlow)
             }
-            
-            completionHandler(nil)
         }
+    }
+    
+    private func handleDataFrame(_ dataFrame: DataFrame) {
+        let protocolNumber = NSNumber(value: AF_INET)
+        writePacket(dataFrame.payload, p: protocolNumber)
     }
     
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         log(.info, "Stopping tunnel, reason: \(reason.rawValue)")
         
         isReadingPackets = false
+        rustunClient?.close()
+        rustunClient = nil
         
         completionHandler()
     }
@@ -85,6 +199,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // Return current statistics
             let response = try? JSONSerialization.data(withJSONObject: stats)
             completionHandler?(response)
+            
+        case "getPeers":
+            // Return current peers list
+            let encoder = JSONEncoder()
+            if let peersData = try? encoder.encode(currentPeers) {
+                completionHandler?(peersData)
+            } else {
+                completionHandler?(nil)
+            }
+            
         default:
             completionHandler?(nil)
         }
@@ -111,16 +235,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         packetFlow.readPackets { [weak self] packets, protocols in
             guard let self = self, self.isReadingPackets else { return }
             
-            // 更新接收统计
-            if let rxPackets = self.stats["rxPackets"] as? Int {
-                self.stats["rxPackets"] = rxPackets + packets.count
-            }
+            self.stats["rxPackets"]? += UInt64(packets.count)
             
             for (index, packet) in packets.enumerated() {
                 // 更新接收字节数
-                if let rxBytes = self.stats["rxBytes"] as? UInt64 {
-                    self.stats["rxBytes"] = rxBytes + UInt64(packet.count)
-                }
+                self.stats["rxBytes"]? += UInt64(packet.count)
                 
                 // 处理数据包
                 self.handlePacket(packet)
@@ -172,10 +291,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // 记录数据包信息
         log(.debug, "📦 Received packet: \(packet.count) bytes, IP v\(version), \(srcIP) -> \(dstIP), Protocol: \(protocolName), Total Length: \(totalLength)")
         
-        // TODO: 在这里实现将数据包转发到 rustun server 的逻辑
-        // 1. 解析数据包
-        // 2. 加密数据包（如果需要）
-        // 3. 通过 TCP/UDP 发送到 rustun server
+        // Send packet to rustun server
+        do {
+            try rustunClient?.sendData(packet)
+        } catch {
+            log(.error, "Failed to send packet to server: \(error.localizedDescription)")
+        }
     }
     
     /// 写入数据包到虚拟网卡
@@ -184,11 +305,46 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         packetFlow.writePackets([packet], withProtocols: [p])
         
         // 更新发送统计
-        if let txPackets = stats["txPackets"] as? Int {
-            stats["txPackets"] = txPackets + 1
+        stats["txPackets"]? += 1
+        stats["txBytes"]? += UInt64(packet.count)
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func parseSubnetMask(_ mask: String) -> String {
+        // If mask is already in dotted decimal format, return it
+        if mask.contains(".") {
+            return mask
         }
-        if let txBytes = stats["txBytes"] as? UInt64 {
-            stats["txBytes"] = txBytes + UInt64(packet.count)
+        
+        // If mask is prefix length, convert to dotted decimal
+        if let prefixLength = Int(mask), prefixLength >= 0 && prefixLength <= 32 {
+            let maskValue: UInt32 = (0xFFFFFFFF << (32 - prefixLength)) & 0xFFFFFFFF
+            let a = (maskValue >> 24) & 0xFF
+            let b = (maskValue >> 16) & 0xFF
+            let c = (maskValue >> 8) & 0xFF
+            let d = maskValue & 0xFF
+            return "\(a).\(b).\(c).\(d)"
         }
+        
+        // Default to /24
+        return "255.255.255.0"
+    }
+    
+    private func createRoute(to destination: String, mask: String) -> NEIPv4Route? {
+        return NEIPv4Route(destinationAddress: destination, subnetMask: mask)
+    }
+    
+    private func parseCIDRRoute(_ cidr: String) -> NEIPv4Route? {
+        let components = cidr.split(separator: "/")
+        guard components.count == 2,
+              let prefixLength = Int(components[1]),
+              prefixLength >= 0 && prefixLength <= 32 else {
+            return nil
+        }
+        
+        let ip = String(components[0])
+        let mask = parseSubnetMask(String(prefixLength))
+        return NEIPv4Route(destinationAddress: ip, subnetMask: mask)
     }
 }

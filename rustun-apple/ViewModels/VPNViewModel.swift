@@ -33,9 +33,12 @@ class VPNViewModel: ObservableObject {
     
     /// Toggle connection
     func toggleConnection() {
-        if isConnected {
+        // 判断当前配置是否是连接的配置
+        if service.isCurrentConnect(id: config.id) {
+            // 当前配置已连接，断开
             disconnect()
         } else {
+            // 当前配置未连接，连接（如果已连接其他配置，service 会先断开再连接）
             connect()
         }
     }

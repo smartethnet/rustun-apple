@@ -1,4 +1,5 @@
 import SwiftUI
+#if os(macOS)
 
 struct VPNFormView: View {
     @Binding var name: String
@@ -15,7 +16,7 @@ struct VPNFormView: View {
                 Text("VPN Name")
                     .font(.headline)
                     .fontWeight(.medium)
-                TextField("My VPN Server", text: $name)
+                TextField("Rustun", text: $name)
                     .textFieldStyle(.roundedBorder)
             }
             
@@ -86,3 +87,4 @@ extension NumberFormatter {
     }
 }
 
+#endif

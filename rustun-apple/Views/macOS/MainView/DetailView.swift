@@ -1,5 +1,6 @@
 import SwiftUI
 
+#if os(macOS)
 struct DetailView: View {
     @ObservedObject var viewModel: VPNViewModel
     @ObservedObject private var service = RustunClientService.shared
@@ -22,7 +23,7 @@ struct DetailView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(Color(NSColor.windowBackgroundColor))
+            .background(PlatformColors.windowBackground)
             
             Divider()
             
@@ -33,7 +34,7 @@ struct DetailView: View {
                 LogsTab()
             }
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(PlatformColors.windowBackground)
     }
 }
 
@@ -56,10 +57,11 @@ struct TabButton: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? Color(NSColor.controlBackgroundColor) : Color.clear)
+                    .fill(isSelected ? PlatformColors.controlBackground : Color.clear)
             )
         }
         .buttonStyle(.plain)
     }
 }
+#endif
 

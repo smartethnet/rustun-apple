@@ -1,7 +1,12 @@
 import SwiftUI
 
+#if os(macOS)
 struct StatisticsCard: View {
-    @ObservedObject private var service = RustunClientService.shared
+    let stats: VPNStats
+    
+    init(stats: VPNStats? = nil) {
+        self.stats = stats ?? RustunClientService.shared.stats
+    }
     
     var body: some View {
         LazyVGrid(columns: [
@@ -11,28 +16,28 @@ struct StatisticsCard: View {
             StatCard(
                 icon: "arrow.down.circle.fill",
                 title: "Downloaded",
-                value: service.stats.formattedRxBytes,
+                value: stats.formattedRxBytes,
                 color: Color(hex: "10b981")
             )
             
             StatCard(
                 icon: "arrow.up.circle.fill",
                 title: "Uploaded",
-                value: service.stats.formattedTxBytes,
+                value: stats.formattedTxBytes,
                 color: Color(hex: "f59e0b")
             )
             
             StatCard(
                 icon: "tray.and.arrow.down.fill",
                 title: "RX Packets",
-                value: "\(service.stats.rxPackets)",
+                value: "\(stats.rxPackets)",
                 color: Color(hex: "3b82f6")
             )
             
             StatCard(
                 icon: "tray.and.arrow.up.fill",
                 title: "TX Packets",
-                value: "\(service.stats.txPackets)",
+                value: "\(stats.txPackets)",
                 color: Color(hex: "8b5cf6")
             )
         }
@@ -66,8 +71,9 @@ struct StatCard: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
         .padding(.horizontal, 8)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(PlatformColors.controlBackground)
         .cornerRadius(8)
     }
 }
+#endif
 

@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 
 enum LogLevel: String {
     case debug = "DEBUG"
@@ -6,17 +7,32 @@ enum LogLevel: String {
     case error = "ERROR"
 }
 
+private let logSubsystem = "com.beyondnetwork.rustun-apple.tunnel-provider"
+private let logCategory = "PacketTunnelProvider"
+
+private let logger = OSLog(subsystem: logSubsystem, category: logCategory)
+
 func log(_ level: LogLevel, _ message: String, file: String = #file, line: Int = #line, function: String = #function) {
-    // 获取当前时间
-    let dateFormatter = DateFormatter()
-    dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-    let currentDate = dateFormatter.string(from: Date())
-    
     // 提取文件名
     let fileName = (file as NSString).lastPathComponent
     
-    // 输出日志
-    NSLog("\(currentDate) [\(level.rawValue)] \(fileName):\(line) \(function) - \(message)")
+    // 格式化日志消息
+    let logMessage = "[\(level.rawValue)] \(fileName):\(line) \(function) - [RUSTUN_PROVIDER] \(message)"
+    
+    // 使用 os_log 输出到系统日志（可以在 Console.app 中查看）
+    // 使用 %{public}s 来标记消息为公开，这样在 Console.app 中就不会显示为 <private>
+    let osLogType: OSLogType = .error
+//    switch level {
+//    case .debug:
+//        osLogType = .debug
+//    case .info:
+//        osLogType = .info
+//    case .error:
+//        osLogType = .error
+//    }
+    
+    // 使用 os_log 而不是 NSLog，并使用 %{public}s 格式
+    os_log("%{public}@", log: logger, type: osLogType, logMessage)
 }
 
 // MARK: - 一些辅助函数

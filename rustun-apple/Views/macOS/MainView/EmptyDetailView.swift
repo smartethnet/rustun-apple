@@ -1,5 +1,6 @@
 import SwiftUI
 
+#if os(macOS)
 struct EmptyDetailView: View {
     @ObservedObject var viewModel: VPNViewModel
     @Binding var selectedConfigId: UUID?
@@ -36,7 +37,7 @@ struct EmptyDetailView: View {
             .controlSize(.large)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(PlatformColors.controlBackground)
         .sheet(isPresented: $showingAddSheet) {
             AddVPNSheet(
                 viewModel: viewModel,
@@ -47,4 +48,5 @@ struct EmptyDetailView: View {
         }
     }
 }
+#endif
 

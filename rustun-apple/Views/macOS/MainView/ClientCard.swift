@@ -1,5 +1,6 @@
 import SwiftUI
 
+#if os(macOS)
 struct ClientCard: View {
     let client: ClientInfo
     
@@ -79,11 +80,21 @@ struct ClientCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            
+            // Last Active Time
+            HStack(spacing: 6) {
+                Image(systemName: "clock")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text("Last active: \(client.lastActiveText)")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
         }
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color(NSColor.controlBackgroundColor))
+                .fill(PlatformColors.secondarySystemBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
@@ -107,5 +118,27 @@ struct ClientInfo: Identifiable {
     let privateIP: String
     let cidrs: [String]
     let isP2P: Bool
+    let lastActive: UInt64
+    
+    var lastActiveText: String {
+        if lastActive == 0 {
+            return "-"
+        }
+        
+        let now = Date().timeIntervalSince1970
+        let lastActiveTime = TimeInterval(lastActive)
+        let elapsed = now - lastActiveTime
+        
+        if elapsed < 60 {
+            return "\(Int(elapsed))s ago"
+        } else if elapsed < 3600 {
+            return "\(Int(elapsed / 60))m ago"
+        } else if elapsed < 86400 {
+            return "\(Int(elapsed / 3600))h ago"
+        } else {
+            return "\(Int(elapsed / 86400))d ago"
+        }
+    }
 }
+#endif
 

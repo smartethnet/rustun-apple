@@ -1,27 +1,15 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var viewModel = VPNViewModel()
-    @State private var selectedConfigId: UUID?
-    
+    #if os(macOS)
     var body: some View {
-        NavigationSplitView {
-            SidebarView(
-                viewModel: viewModel,
-                selectedConfigId: $selectedConfigId
-            )
-        } detail: {
-            if let _ = selectedConfigId {
-                DetailView(viewModel: viewModel)
-            } else {
-                EmptyDetailView(
-                    viewModel: viewModel,
-                    selectedConfigId: $selectedConfigId
-                )
-            }
-        }
-        .navigationSplitViewStyle(.balanced)
+        ContentView_macOS()
     }
+    #elseif os(iOS)
+    var body: some View {
+        ContentView_iOS()
+    }
+    #endif
 }
 
 #Preview {

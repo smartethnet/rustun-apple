@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+#if os(macOS)
 struct LogsTab: View {
     @ObservedObject private var service = RustunClientService.shared
     @State private var searchText = ""
@@ -50,7 +51,7 @@ struct LogsTab: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color(NSColor.controlBackgroundColor))
+            .background(PlatformColors.controlBackground)
             
             Divider()
             
@@ -78,7 +79,7 @@ struct LogsTab: View {
                             }
                         }
                     }
-                    .background(Color(NSColor.textBackgroundColor))
+                    .background(PlatformColors.textBackground)
                     .onChange(of: service.logs.count) { _ in
                         if autoScroll, let lastIndex = filteredLogs.indices.last {
                             withAnimation {
@@ -136,4 +137,5 @@ struct LogRow: View {
         }
     }
 }
+#endif
 
