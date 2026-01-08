@@ -1,10 +1,9 @@
 import SwiftUI
 
 #if os(macOS)
-struct EmptyDetailView: View {
+struct SetupView: View {
     @ObservedObject var viewModel: VPNViewModel
-    @Binding var selectedConfigId: UUID?
-    @State private var showingAddSheet = false
+    @State private var showingAddVPN = false
     
     var body: some View {
         VStack(spacing: 24) {
@@ -17,17 +16,17 @@ struct EmptyDetailView: View {
                     .font(.title2)
                     .fontWeight(.semibold)
                 
-                Text("Create your first VPN configuration to get started")
+                Text("Add your first VPN configuration to get started")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
             }
             
-            Button(action: { showingAddSheet = true }) {
+            Button(action: { showingAddVPN = true }) {
                 HStack(spacing: 8) {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 16))
-                    Text("Create VPN")
+                    Text("Add VPN")
                         .font(.system(size: 15, weight: .medium))
                 }
                 .padding(.horizontal, 20)
@@ -37,14 +36,9 @@ struct EmptyDetailView: View {
             .controlSize(.large)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(PlatformColors.controlBackground)
-        .sheet(isPresented: $showingAddSheet) {
-            AddVPNSheet(
-                viewModel: viewModel,
-                onSave: { config in
-                    selectedConfigId = config.id
-                }
-            )
+        .background(PlatformColors.windowBackground)
+        .sheet(isPresented: $showingAddVPN) {
+            AddVPN(viewModel: viewModel)
         }
     }
 }

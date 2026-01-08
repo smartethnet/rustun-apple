@@ -1,58 +1,12 @@
 import SwiftUI
 
-#if os(iOS)
-struct ContentView_iOS: View {
-    @StateObject private var viewModel = VPNViewModel()
-    @State private var selectedTab = 0
-    
-    var body: some View {
-        TabView(selection: $selectedTab) {
-            NetworkTab(viewModel: viewModel)
-                .tabItem {
-                    Label("Network", systemImage: "network")
-                }
-                .tag(0)
-            
-            PeersTab()
-                .tabItem {
-                    Label("Peers", systemImage: "person.2")
-                }
-                .tag(1)
-            
-            SettingsView(viewModel: viewModel)
-                .tabItem {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                .tag(2)
-        }
-    }
-}
-
+#if os(macOS)
 struct NetworkTab: View {
     @ObservedObject var viewModel: VPNViewModel
     @ObservedObject private var service = RustunClientService.shared
+    @State private var showingSettingsSheet = false
     
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    VStack(spacing: 12) {
-                        VPNCard(viewModel: viewModel)
-                        
-                        StatisticsCard()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 16)
-                }
-            }
-            .navigationTitle("Network")
-        }
-    }
-}
-
-struct PeersTab: View {
-    @ObservedObject private var service = RustunClientService.shared
-    
+    // 将 peers 转换为 ClientInfo
     private var clients: [ClientInfo] {
         service.peers.map { peer in
             ClientInfo(
@@ -66,201 +20,152 @@ struct PeersTab: View {
     }
     
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+        ScrollView {
+            VStack(spacing: 16) {
+                HStack(spacing: 12) {
+                    VPNCard(viewModel: viewModel, showingSettingsSheet: $showingSettingsSheet)
+                        .frame(maxWidth: 350)
+                    
+                    StatisticsCard(stats: service.stats)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                
+                // Clients Section
+                VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Peers")
-                            .font(.title2)
-                            .fontWeight(.bold)
+                            .font(.headline)
                         
                         Spacer()
                         
                         Text("\(clients.count)")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
+                            .font(.caption2)
                             .foregroundColor(.secondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(PlatformColors.secondarySystemBackground)
-                            .cornerRadius(8)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(PlatformColors.separator.opacity(0.3))
+                            .cornerRadius(6)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 16)
                     
                     if service.status == .connected {
                         if clients.isEmpty {
-                            VStack(spacing: 16) {
+                            // Empty state
+                            VStack(spacing: 12) {
                                 Image(systemName: "person.2.slash")
-                                    .font(.system(size: 60))
-                                    .foregroundColor(.secondary.opacity(0.6))
-                                
+                                    .font(.system(size: 40))
+                                    .foregroundColor(.secondary)
                                 Text("No other peers")
-                                    .font(.title3)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
-                                
-                                Text("Peers will appear here when they connect to the VPN")
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal, 32)
+                                Text("Peers will appear here when they connect")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary.opacity(0.8))
                             }
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 80)
+                            .padding(.vertical, 48)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(PlatformColors.controlBackground)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(PlatformColors.separator, lineWidth: 1)
+                            )
                         } else {
-                            VStack(spacing: 12) {
+                            // Clients grid
+                            LazyVGrid(columns: [
+                                GridItem(.flexible(), spacing: 12),
+                                GridItem(.flexible(), spacing: 12)
+                            ], spacing: 12) {
                                 ForEach(clients) { client in
                                     ClientCard(client: client)
                                 }
                             }
-                            .padding(.horizontal, 16)
                         }
                     } else {
-                        VStack(spacing: 16) {
+                        // Not connected
+                        VStack(spacing: 12) {
                             Image(systemName: "network.slash")
-                                .font(.system(size: 60))
-                                .foregroundColor(.secondary.opacity(0.6))
-                            
+                                .font(.system(size: 40))
+                                .foregroundColor(.secondary)
                             Text("Not connected")
-                                .font(.title3)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.primary)
-                            
-                            Text("Connect to VPN to see your peers")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 32)
+                            Text("Connect to VPN to see your peers")
+                                .font(.caption)
+                                .foregroundColor(.secondary.opacity(0.8))
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 80)
+                        .padding(.vertical, 48)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(PlatformColors.controlBackground)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(PlatformColors.separator, lineWidth: 1)
+                        )
                     }
                 }
+                .padding(.horizontal, 16)
                 .padding(.bottom, 16)
             }
-            .refreshable {
-                if service.status == .connected {
-                    service.requestPeersFromProvider()
-                }
+        }
+        .onAppear {
+            if service.status == .connected {
+                service.requestPeersFromProvider()
             }
-            .navigationTitle("Peers")
-            .onAppear {
-                if service.status == .connected {
-                    service.requestPeersFromProvider()
-                }
+        }
+        .onChange(of: service.status) { newStatus in
+            if newStatus == .connected {
+                service.requestPeersFromProvider()
             }
-            .onChange(of: service.status) { newStatus in
-                if newStatus == .connected {
-                    service.requestPeersFromProvider()
-                }
-            }
+        }
+        .sheet(isPresented: $showingSettingsSheet) {
+            EditVPN(viewModel: viewModel)
         }
     }
 }
 
-struct SettingsView: View {
-    @ObservedObject var viewModel: VPNViewModel
-    
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("VPN Configuration") {
-                    TextField("Name", text: $viewModel.config.name)
-                    TextField("Server Address", text: $viewModel.config.serverAddress)
-                        .keyboardType(.numbersAndPunctuation)
-                    TextField("Server Port", value: $viewModel.config.serverPort, format: .number)
-                        .keyboardType(.numberPad)
-                    TextField("Identity", text: $viewModel.config.identity)
-                    
-                    Picker("Encryption", selection: $viewModel.config.cryptoType) {
-                        ForEach(CryptoType.allCases, id: \.self) { type in
-                            Text(type.displayName).tag(type)
-                        }
-                    }
-                    
-                    SecureField("Crypto Key", text: $viewModel.config.cryptoKey)
-                    
-                    Toggle("Enable P2P", isOn: $viewModel.config.enableP2P)
-                    
-                    TextField("Keepalive Interval", value: $viewModel.config.keepaliveInterval, format: .number)
-                        .keyboardType(.numberPad)
-                }
-                
-                Section("Saved Configurations") {
-                    ForEach(viewModel.savedConfigs) { config in
-                        Button(action: {
-                            viewModel.loadConfig(config)
-                        }) {
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(config.name)
-                                        .foregroundColor(.primary)
-                                    Text("\(config.serverAddress):\(config.serverPort)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                                if viewModel.config.id == config.id {
-                                    Image(systemName: "checkmark")
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                        }
-                    }
-                    .onDelete { indexSet in
-                        for index in indexSet {
-                            viewModel.deleteConfig(viewModel.savedConfigs[index])
-                        }
-                    }
-                }
-                
-                Section {
-                    Button(action: {
-                        viewModel.saveConfig()
-                    }) {
-                        HStack {
-                            Spacer()
-                            Text("Save Configuration")
-                            Spacer()
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Settings")
-        }
-    }
-}
-
-struct VPNCard: View {
+// MARK: - VPNCard
+private struct VPNCard: View {
     @ObservedObject var viewModel: VPNViewModel
     @ObservedObject private var service = RustunClientService.shared
+    @Binding var showingSettingsSheet: Bool
     
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text(viewModel.config.name)
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.primary)
+                // Name with Edit button
+                HStack(spacing: 6) {
+                    Text(viewModel.config.name)
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    Button(action: {
+                        showingSettingsSheet = true
+                    }) {
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Edit VPN Configuration")
+                }
                 
                 Spacer()
                 
+                // Status
                 HStack(spacing: 6) {
                     Circle()
                         .fill(statusColor)
                         .frame(width: 8, height: 8)
                         .shadow(color: statusColor.opacity(0.5), radius: 2)
-                    
-                    if service.status == .connected {
-                        Text("·")
-                            .foregroundColor(.secondary)
-                        Text(service.stats.formattedConnectedTime)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
                 }
                 
+                // Toggle Switch (Small)
                 Toggle("", isOn: Binding(
                     get: { service.status == .connected },
                     set: { _ in viewModel.toggleConnection() }
@@ -271,6 +176,7 @@ struct VPNCard: View {
                 .disabled(service.status == .connecting)
             }
             
+            // Server Address
             HStack(spacing: 6) {
                 Image(systemName: "server.rack")
                     .font(.callout)
@@ -280,6 +186,7 @@ struct VPNCard: View {
                     .foregroundColor(.secondary)
             }
             
+            // Identity + Private IP (same row)
             HStack(spacing: 20) {
                 HStack(spacing: 6) {
                     Image(systemName: "person.fill")
@@ -290,7 +197,29 @@ struct VPNCard: View {
                         .foregroundColor(.secondary)
                 }
                 
+                HStack(spacing: 6) {
+                    Image(systemName: "network")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                    Text("-") // Placeholder for private_ip
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                }
+                
                 Spacer()
+            }
+            
+            // Routes
+            HStack(spacing: 6) {
+                Image(systemName: "network.badge.shield.half.filled")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                Text("Local Ciders:")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                Text("-") 
+                    .font(.callout)
+                    .foregroundColor(.secondary)
             }
         }
         .padding(16)
@@ -321,8 +250,13 @@ struct VPNCard: View {
     }
 }
 
-struct StatisticsCard: View {
-    @ObservedObject private var service = RustunClientService.shared
+// MARK: - StatisticsCard
+private struct StatisticsCard: View {
+    let stats: VPNStats
+    
+    init(stats: VPNStats? = nil) {
+        self.stats = stats ?? RustunClientService.shared.stats
+    }
     
     var body: some View {
         LazyVGrid(columns: [
@@ -332,36 +266,36 @@ struct StatisticsCard: View {
             StatCard(
                 icon: "arrow.down.circle.fill",
                 title: "Downloaded",
-                value: service.stats.formattedRxBytes,
-                color: .green
+                value: stats.formattedRxBytes,
+                color: Color(hex: "10b981")
             )
             
             StatCard(
                 icon: "arrow.up.circle.fill",
                 title: "Uploaded",
-                value: service.stats.formattedTxBytes,
-                color: .orange
+                value: stats.formattedTxBytes,
+                color: Color(hex: "f59e0b")
             )
             
             StatCard(
                 icon: "tray.and.arrow.down.fill",
                 title: "RX Packets",
-                value: "\(service.stats.rxPackets)",
-                color: .blue
+                value: "\(stats.rxPackets)",
+                color: Color(hex: "3b82f6")
             )
             
             StatCard(
                 icon: "tray.and.arrow.up.fill",
                 title: "TX Packets",
-                value: "\(service.stats.txPackets)",
-                color: .purple
+                value: "\(stats.txPackets)",
+                color: Color(hex: "8b5cf6")
             )
         }
         .frame(maxWidth: .infinity)
     }
 }
 
-struct StatCard: View {
+private struct StatCard: View {
     let icon: String
     let title: String
     let value: String
@@ -387,17 +321,20 @@ struct StatCard: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
         .padding(.horizontal, 8)
-        .background(PlatformColors.secondarySystemBackground)
+        .background(PlatformColors.controlBackground)
         .cornerRadius(8)
     }
 }
 
-struct ClientCard: View {
+// MARK: - ClientCard
+private struct ClientCard: View {
     let client: ClientInfo
     
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // Header: Identity + P2P Badge
             HStack(spacing: 8) {
+                // Status indicator
                 Circle()
                     .fill(statusColor)
                     .frame(width: 8, height: 8)
@@ -440,6 +377,7 @@ struct ClientCard: View {
                 }
             }
             
+            // Private IP
             HStack(spacing: 6) {
                 Image(systemName: "network")
                     .font(.system(size: 10))
@@ -449,6 +387,7 @@ struct ClientCard: View {
                     .foregroundColor(.secondary)
             }
             
+            // Routes (CIDRs)
             if !client.cidrs.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 4) {
@@ -468,6 +407,7 @@ struct ClientCard: View {
                 }
             }
             
+            // Last Active Time
             HStack(spacing: 6) {
                 Image(systemName: "clock")
                     .font(.system(size: 10))
@@ -526,5 +466,6 @@ struct ClientInfo: Identifiable {
         }
     }
 }
+
 #endif
 

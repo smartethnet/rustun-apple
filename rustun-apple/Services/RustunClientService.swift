@@ -9,13 +9,19 @@ class RustunClientService: ObservableObject {
     @Published var peers: [PeerDetail] = []
     @Published var logs: [String] = []
     @Published var errorMessage: String?
+    @Published var virtualIP: String = ""
+    
+    /// Current VPN configuration (read-only)
+    var config: VPNConfig? {
+        _config
+    }
     
     private var tunnelManager: NETunnelProviderManager?
     private var statsTimer: Timer?
     private var connectTime: Date?
     private var statusObserver: NSObjectProtocol?
     
-    private var config: VPNConfig?
+    private var _config: VPNConfig?
     private var pendingConnectConfig: VPNConfig?
     private var statusCancellable: AnyCancellable?
     
@@ -35,7 +41,7 @@ class RustunClientService: ObservableObject {
     func connect(with config: VPNConfig) {
         // 如果当前已连接，且是不同配置，先断开
         if status != .disconnected {
-            if let currentConfig = self.config, currentConfig.id != config.id {
+            if let currentConfig = self._config, currentConfig.id != config.id {
                 // 断开当前连接，然后连接新配置
                 disconnectAndConnect(config)
                 return
@@ -48,7 +54,7 @@ class RustunClientService: ObservableObject {
             }
         }
         
-        self.config = config
+        self._config = config
         
         status = .connecting
         errorMessage = nil
@@ -82,6 +88,8 @@ class RustunClientService: ObservableObject {
                     } else {
                         self.connectTime = Date()
                         self.startStatsTimer()
+                        self.requestPeersFromProvider()
+                        self.requestNetworkInfoFromProvider()
                         self.addLog("✅ Tunnel started successfully")
                     }
                 }
@@ -93,6 +101,7 @@ class RustunClientService: ObservableObject {
     func disconnect() {
         guard let manager = tunnelManager else {
             status = .disconnected
+            cleanupAfterDisconnect()
             return
         }
         
@@ -100,17 +109,50 @@ class RustunClientService: ObservableObject {
         
         guard let session = manager.connection as? NETunnelProviderSession else {
             status = .disconnected
+            cleanupAfterDisconnect()
             return
         }
         
-        session.stopTunnel()
+        // Check if already disconnected
+        if session.status == .disconnected || session.status == .invalid {
+            status = .disconnected
+            cleanupAfterDisconnect()
+            return
+        }
         
+        // Stop tunnel (this is asynchronous)
+        do {
+            try session.stopTunnel()
+        } catch {
+            addLog("⚠️ Error stopping tunnel: \(error.localizedDescription)")
+            // Even if stopTunnel fails, we should still clean up
+            status = .disconnected
+            cleanupAfterDisconnect()
+            return
+        }
+        
+        // Cleanup will happen when status changes to disconnected via updateStatusFromManager
+        // But we also set a timeout to ensure cleanup happens
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self else { return }
+            if self.status != .disconnected {
+                // Force cleanup if still not disconnected after 2 seconds
+                self.status = .disconnected
+                self.cleanupAfterDisconnect()
+            }
+        }
+    }
+    
+    /// Cleanup after disconnection
+    private func cleanupAfterDisconnect() {
         // Stop stats timer
         statsTimer?.invalidate()
         statsTimer = nil
         connectTime = nil
-        self.config = nil
-        
+        self._config = nil
+        self.peers = []
+        self.stats = VPNStats()
+        self.virtualIP = ""
         addLog("✅ Disconnected")
     }
     
@@ -158,6 +200,7 @@ class RustunClientService: ObservableObject {
         
         // Store rustun-specific configuration in providerConfiguration
         var providerConfig: [String: Any] = [:]
+        providerConfig["configId"] = config.id.uuidString
         providerConfig["serverAddress"] = config.serverAddress
         providerConfig["serverPort"] = config.serverPort
         providerConfig["identity"] = config.identity
@@ -229,7 +272,19 @@ class RustunClientService: ObservableObject {
             
             if let manager = managers?.first {
                 self.tunnelManager = manager
-                self.updateStatusFromManager()
+                
+                // Load manager from preferences to get latest connection state
+                manager.loadFromPreferences { [weak self] error in
+                    guard let self = self else { return }
+                    
+                    // Update status first
+                    self.updateStatusFromManager()
+                    
+                    // If connected but config is nil, restore config from manager
+                    if self.status == .connected && self._config == nil {
+                        self.restoreConfigFromManager(manager)
+                    }
+                }
             }
         }
     }
@@ -256,11 +311,14 @@ class RustunClientService: ObservableObject {
         switch session.status {
         case .invalid:
             status = .disconnected
+            if self.status != .disconnected {
+                cleanupAfterDisconnect()
+            }
         case .disconnected:
             status = .disconnected
-            statsTimer?.invalidate()
-            statsTimer = nil
-            connectTime = nil
+            if self.status != .disconnected {
+                cleanupAfterDisconnect()
+            }
         case .connecting:
             status = .connecting
         case .connected:
@@ -268,19 +326,23 @@ class RustunClientService: ObservableObject {
             if connectTime == nil {
                 connectTime = Date()
                 startStatsTimer()
+                requestNetworkInfoFromProvider()
             }
         case .reasserting:
             status = .connecting
         case .disconnecting:
             status = .disconnected
+            // Don't cleanup yet, wait for .disconnected state
         @unknown default:
             status = .disconnected
+            cleanupAfterDisconnect()
         }
     }
     
     /// Start statistics timer
     private func startStatsTimer() {
         statsTimer?.invalidate()
+        self.updateStats()
         statsTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             self?.updateStats()
         }
@@ -341,8 +403,42 @@ class RustunClientService: ObservableObject {
         } catch {
         }
         
-        // Also request peers
+        // Also request peers and network info
         requestPeersFromProvider()
+        requestNetworkInfoFromProvider()
+    }
+    
+    /// Request network information from tunnel provider
+    func requestNetworkInfoFromProvider() {
+        guard let manager = tunnelManager,
+              let session = manager.connection as? NETunnelProviderSession,
+              session.status == .connected else {
+            return
+        }
+        
+        // Send message to tunnel provider to request network info
+        let message = ["action": "getNetworkInfo"]
+        guard let messageData = try? JSONSerialization.data(withJSONObject: message) else {
+            return
+        }
+        
+        do {
+            try session.sendProviderMessage(messageData) { [weak self] responseData in
+                guard let self = self,
+                      let data = responseData,
+                      let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    return
+                }
+                
+                DispatchQueue.main.async {
+                    if let virtualIP = response["virtualIP"] as? String {
+                        self.virtualIP = virtualIP
+                    }
+                }
+            }
+        } catch {
+            addLog("❌ Failed to request network info: \(error.localizedDescription)")
+        }
     }
     
     /// Request peers list from tunnel provider
@@ -391,10 +487,49 @@ class RustunClientService: ObservableObject {
         }
     }
     
-    func isCurrentConnect(id: UUID) -> Bool {
-        guard let config = self.config else {return false}
-        return config.id == id
+    /// Restore VPNConfig from tunnel manager's configuration
+    private func restoreConfigFromManager(_ manager: NETunnelProviderManager) {
+        guard let protocolConfig = manager.protocolConfiguration as? NETunnelProviderProtocol,
+              let providerConfig = protocolConfig.providerConfiguration as? [String: Any] else {
+            return
+        }
+        
+        // Extract configuration from providerConfiguration
+        guard let serverAddress = providerConfig["serverAddress"] as? String,
+              let serverPort = providerConfig["serverPort"] as? Int,
+              let identity = providerConfig["identity"] as? String,
+              let cryptoTypeString = providerConfig["cryptoType"] as? String,
+              let cryptoType = CryptoType(rawValue: cryptoTypeString),
+              let cryptoKey = providerConfig["cryptoKey"] as? String else {
+            return
+        }
+        
+        let enableP2P = providerConfig["enableP2P"] as? Bool ?? true
+        let keepaliveInterval = providerConfig["keepaliveInterval"] as? Int ?? 10
+        
+        // Restore config ID if available
+        var configId = UUID()
+        if let configIdString = providerConfig["configId"] as? String,
+           let restoredId = UUID(uuidString: configIdString) {
+            configId = restoredId
+        }
+        
+        // Restore config
+        let restoredConfig = VPNConfig(
+            id: configId,
+            name: manager.localizedDescription ?? "Rustun VPN",
+            serverAddress: serverAddress,
+            serverPort: serverPort,
+            identity: identity,
+            cryptoType: cryptoType,
+            cryptoKey: cryptoKey,
+            enableP2P: enableP2P,
+            keepaliveInterval: keepaliveInterval
+        )
+        
+        DispatchQueue.main.async {
+            self._config = restoredConfig
+            self.addLog("✅ Restored VPN config from active connection")
+        }
     }
 }
-
-

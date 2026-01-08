@@ -9,6 +9,9 @@
 /* Begin PBXBuildFile section */
 		A39F807C2F0919D600952B70 /* tunnel-provider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A39F80732F0919D600952B70 /* tunnel-provider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A39F80862F091B5C00952B70 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A39F80572F0903A800952B70 /* NetworkExtension.framework */; };
+		A3A2C1B22F0E0C0000C5B8D0 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = A3A2C1B12F0E0C0000C5B8D0 /* Markdown */; };
+		A3A2C1B52F0E0CC300C5B8D0 /* SwiftyMarkdown in Frameworks */ = {isa = PBXBuildFile; productRef = A3A2C1B42F0E0CC300C5B8D0 /* SwiftyMarkdown */; };
+		A3A2C1B82F0E116A00C5B8D0 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A3A2C1B72F0E116A00C5B8D0 /* MarkdownUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -97,6 +100,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A3A2C1B82F0E116A00C5B8D0 /* MarkdownUI in Frameworks */,
+				A3A2C1B22F0E0C0000C5B8D0 /* Markdown in Frameworks */,
+				A3A2C1B52F0E0CC300C5B8D0 /* SwiftyMarkdown in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -170,6 +176,9 @@
 			);
 			name = "rustun-apple";
 			packageProductDependencies = (
+				A3A2C1B12F0E0C0000C5B8D0 /* Markdown */,
+				A3A2C1B42F0E0CC300C5B8D0 /* SwiftyMarkdown */,
+				A3A2C1B72F0E116A00C5B8D0 /* MarkdownUI */,
 			);
 			productName = "rustun-apple";
 			productReference = A39F7FA32F08FB9500952B70 /* rustun-apple.app */;
@@ -249,6 +258,11 @@
 			);
 			mainGroup = A39F7F9A2F08FB9500952B70;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A3A2C1B02F0E0ACD00C5B8D0 /* XCRemoteSwiftPackageReference "swift-markdown" */,
+				A3A2C1B32F0E0CC300C5B8D0 /* XCRemoteSwiftPackageReference "SwiftyMarkdown" */,
+				A3A2C1B62F0E116A00C5B8D0 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A39F7FA42F08FB9500952B70 /* Products */;
 			projectDirPath = "";
@@ -451,6 +465,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Rustun;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -507,6 +522,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Rustun;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -703,6 +719,51 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A3A2C1B02F0E0ACD00C5B8D0 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-markdown.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.7.3;
+			};
+		};
+		A3A2C1B32F0E0CC300C5B8D0 /* XCRemoteSwiftPackageReference "SwiftyMarkdown" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/SimonFairbairn/SwiftyMarkdown";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.2.4;
+			};
+		};
+		A3A2C1B62F0E116A00C5B8D0 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gonzalezreal/swift-markdown-ui";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.4.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A3A2C1B12F0E0C0000C5B8D0 /* Markdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A3A2C1B02F0E0ACD00C5B8D0 /* XCRemoteSwiftPackageReference "swift-markdown" */;
+			productName = Markdown;
+		};
+		A3A2C1B42F0E0CC300C5B8D0 /* SwiftyMarkdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A3A2C1B32F0E0CC300C5B8D0 /* XCRemoteSwiftPackageReference "SwiftyMarkdown" */;
+			productName = SwiftyMarkdown;
+		};
+		A3A2C1B72F0E116A00C5B8D0 /* MarkdownUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A3A2C1B62F0E116A00C5B8D0 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
+			productName = MarkdownUI;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A39F7F9B2F08FB9500952B70 /* Project object */;
 }

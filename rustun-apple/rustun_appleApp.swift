@@ -10,7 +10,9 @@ struct rustun_appleApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .frame(minWidth: 600, maxWidth: 800, minHeight: 500, maxHeight: 700)
         }
+        .defaultSize(width: 700, height: 600)
         .commands {
             CommandGroup(replacing: .newItem) { }
         }

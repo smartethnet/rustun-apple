@@ -3,17 +3,25 @@ import Combine
 
 class VPNViewModel: ObservableObject {
     @Published var config: VPNConfig
-    @Published var savedConfigs: [VPNConfig] = []
     @Published var isConnected: Bool = false
+    @Published var savedConfigs: [VPNConfig] = []
     
     private var cancellables = Set<AnyCancellable>()
     private let service = RustunClientService.shared
-    private let configsKey = "saved_vpn_configs"
+    private let configKey = "vpn_config"
+    private let savedConfigsKey = "vpn_saved_configs"
+    
+    /// Check if config is empty (no valid configuration)
+    var hasValidConfig: Bool {
+        !config.serverAddress.isEmpty && !config.identity.isEmpty
+    }
     
     init() {
-        // Load default or last used config
         self.config = VPNConfig()
-        loadConfigs()
+        // Load saved configs
+        self.savedConfigs = loadSavedConfigs()
+        // Load current config or use default
+        self.config = loadConfig() ?? VPNConfig()
         service.$status
             .sink { [weak self] status in
                 self?.isConnected = (status == .connected)
@@ -33,55 +41,89 @@ class VPNViewModel: ObservableObject {
     
     /// Toggle connection
     func toggleConnection() {
-        // 判断当前配置是否是连接的配置
-        if service.isCurrentConnect(id: config.id) {
-            // 当前配置已连接，断开
+        if service.status == .connected {
             disconnect()
         } else {
-            // 当前配置未连接，连接（如果已连接其他配置，service 会先断开再连接）
             connect()
         }
     }
     
     /// Save current config
     func saveConfig() {
-        // Update existing or add new
-        if let index = savedConfigs.firstIndex(where: { $0.id == config.id }) {
-            savedConfigs[index] = config
-        } else {
-            savedConfigs.append(config)
+        // Save current config
+        if let encoded = try? JSONEncoder().encode(config) {
+            UserDefaults.standard.set(encoded, forKey: configKey)
         }
         
-        saveConfigs()
-    }
-    
-    /// Delete a config
-    func deleteConfig(_ config: VPNConfig) {
-        savedConfigs.removeAll { $0.id == config.id }
-        saveConfigs()
-    }
-    
-    /// Load a saved config
-    func loadConfig(_ config: VPNConfig) {
-        self.config = config
-    }
-    
-    /// Save configs to UserDefaults
-    private func saveConfigs() {
-        if let encoded = try? JSONEncoder().encode(savedConfigs) {
-            UserDefaults.standard.set(encoded, forKey: configsKey)
-        }
-    }
-    
-    /// Load configs from UserDefaults
-    private func loadConfigs() {
-        if let data = UserDefaults.standard.data(forKey: configsKey),
-           let decoded = try? JSONDecoder().decode([VPNConfig].self, from: data) {
-            savedConfigs = decoded
-            if let first = decoded.first {
-                config = first
+        // Add to saved configs if not already present
+        if !savedConfigs.contains(where: { $0.id == config.id }) {
+            savedConfigs.append(config)
+            saveSavedConfigs()
+        } else {
+            // Update existing config in saved configs
+            if let index = savedConfigs.firstIndex(where: { $0.id == config.id }) {
+                savedConfigs[index] = config
+                saveSavedConfigs()
             }
         }
+    }
+    
+    /// Load a specific config
+    func loadConfig(_ configToLoad: VPNConfig) {
+        disconnect()
+        config = configToLoad
+        // Save as current config
+        if let encoded = try? JSONEncoder().encode(config) {
+            UserDefaults.standard.set(encoded, forKey: configKey)
+        }
+    }
+    
+    /// Delete a specific saved config
+    func deleteConfig(_ configToDelete: VPNConfig) {
+        savedConfigs.removeAll { $0.id == configToDelete.id }
+        saveSavedConfigs()
+        
+        // If deleting the current config, reset to default
+        if config.id == configToDelete.id {
+            disconnect()
+            config = VPNConfig()
+            UserDefaults.standard.removeObject(forKey: configKey)
+        }
+    }
+    
+    /// Load config from UserDefaults
+    private func loadConfig() -> VPNConfig? {
+        guard let data = UserDefaults.standard.data(forKey: configKey),
+              let decoded = try? JSONDecoder().decode(VPNConfig.self, from: data) else {
+            return nil
+        }
+        return decoded
+    }
+    
+    /// Load saved configs from UserDefaults
+    private func loadSavedConfigs() -> [VPNConfig] {
+        guard let data = UserDefaults.standard.data(forKey: savedConfigsKey),
+              let decoded = try? JSONDecoder().decode([VPNConfig].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+    
+    /// Save saved configs to UserDefaults
+    private func saveSavedConfigs() {
+        if let encoded = try? JSONEncoder().encode(savedConfigs) {
+            UserDefaults.standard.set(encoded, forKey: savedConfigsKey)
+        }
+    }
+    
+    /// Delete current config (disconnect if connected, then clear config)
+    func deleteConfig() {
+        disconnect()
+        // Clear config
+        config = VPNConfig()
+        
+        // Remove from UserDefaults
+        UserDefaults.standard.removeObject(forKey: configKey)
     }
 }
 

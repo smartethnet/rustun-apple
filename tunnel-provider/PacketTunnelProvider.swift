@@ -14,6 +14,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private var rustunClient: RustunClient?
     private var handshakeReply: HandshakeReplyFrame?
     private var currentPeers: [PeerDetail] = []
+    private var currentCIDRs: Set<String> = [] // Track current CIDRs for route management
+    
+    // Network configuration from handshake (doesn't change after initial setup)
+    private var tunnelGateway: String?
+    private var tunnelPrivateIP: String?
+    private var tunnelMask: String?
     
     override init() {
         super.init()
@@ -75,8 +81,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         
         client.onKeepAlive = { [weak self] keepAlive in
             guard let self = self else { return }
-            self.currentPeers = keepAlive.peerDetails
-            log(.debug, "Updated peers from keepalive: \(keepAlive.peerDetails.count) peers")
+            self.handleKeepAlive(keepAlive)
         }
         
         self.rustunClient = client
@@ -116,30 +121,82 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private func handleHandshakeReply(_ reply: HandshakeReplyFrame) {
         log(.info, "Received handshake reply: privateIP=\(reply.privateIP), gateway=\(reply.gateway)")
         self.handshakeReply = reply
+        
+        // Store network configuration (these don't change after handshake)
+        self.tunnelGateway = reply.gateway
+        self.tunnelPrivateIP = reply.privateIP
+        self.tunnelMask = reply.mask
+        
         self.currentPeers = reply.peerDetails
-        log(.info, "Initial peers: \(reply.peerDetails.count) peers")
+        
+        // Extract and store initial CIDRs
+        var initialCIDRs: Set<String> = []
+        for peer in reply.peerDetails {
+            initialCIDRs.formUnion(peer.ciders)
+        }
+        self.currentCIDRs = initialCIDRs
+        log(.info, "Initial peers: \(reply.peerDetails.count) peers, CIDRs: \(initialCIDRs.count)")
         
         // Configure tunnel network settings based on handshake reply
-        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: reply.gateway)
+        updateTunnelRoutes()
+    }
+    
+    private func handleKeepAlive(_ keepAlive: KeepAliveFrame) {
+        log(.debug, "Received keepalive: \(keepAlive.peerDetails.count) peers")
+        
+        // Extract new CIDRs from keepalive
+        var newCIDRs: Set<String> = []
+        for peer in keepAlive.peerDetails {
+            newCIDRs.formUnion(peer.ciders)
+        }
+        
+        // Compare with current CIDRs
+        let addedCIDRs = newCIDRs.subtracting(currentCIDRs)
+        let removedCIDRs = currentCIDRs.subtracting(newCIDRs)
+        
+        if !addedCIDRs.isEmpty || !removedCIDRs.isEmpty {
+            log(.info, "CIDR changes detected - Added: \(addedCIDRs), Removed: \(removedCIDRs)")
+            
+            // Update current peers and CIDRs
+            self.currentPeers = keepAlive.peerDetails
+            self.currentCIDRs = newCIDRs
+            
+            // Update tunnel routes
+            updateTunnelRoutes()
+        } else {
+            // Just update peers list, no route changes
+            self.currentPeers = keepAlive.peerDetails
+            log(.debug, "No CIDR changes, peers updated")
+        }
+    }
+    
+    private func updateTunnelRoutes() {
+        guard let gateway = tunnelGateway,
+              let privateIP = tunnelPrivateIP,
+              let maskString = tunnelMask else {
+            log(.error, "Cannot update routes: network configuration not available")
+            return
+        }
+        
+        // Create new tunnel settings
+        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: gateway)
         
         // Parse subnet mask
-        let mask = parseSubnetMask(reply.mask)
-        let ipv4Settings = NEIPv4Settings(addresses: [reply.privateIP], subnetMasks: [mask])
+        let mask = parseSubnetMask(maskString)
+        let ipv4Settings = NEIPv4Settings(addresses: [privateIP], subnetMasks: [mask])
         
-        // Add routes from peer details
+        // Build routes list
         var routes: [NEIPv4Route] = []
         
         // Add route to gateway
-        if let gatewayRoute = createRoute(to: reply.gateway, mask: mask) {
+        if let gatewayRoute = createRoute(to: gateway, mask: mask) {
             routes.append(gatewayRoute)
         }
         
-        // Add routes for peer CIDRs
-        for peer in reply.peerDetails {
-            for cidr in peer.ciders {
-                if let route = parseCIDRRoute(cidr) {
-                    routes.append(route)
-                }
+        // Add routes for all current CIDRs
+        for cidr in currentCIDRs {
+            if let route = parseCIDRRoute(cidr) {
+                routes.append(route)
             }
         }
         
@@ -151,23 +208,26 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         
         // Configure DNS
         settings.dnsSettings = NEDNSSettings(servers: ["8.8.8.8", "8.8.4.4"])
+        settings.mtu = 1430
         
         // Update tunnel settings
         setTunnelNetworkSettings(settings) { [weak self] error in
             guard let self = self else { return }
             
             if let error = error {
-                log(.error, "Failed to set tunnel settings: \(error.localizedDescription)")
+                log(.error, "Failed to update tunnel routes: \(error.localizedDescription)")
                 return
             }
             
-            log(.info, "Tunnel network settings configured successfully")
+            log(.info, "Tunnel routes updated successfully - Total routes: \(routes.count)")
             
-            // Start reading packets from tunnel
-            DispatchQueue.global(qos: .background).async { [weak self] in
-                guard let self = self else { return }
-                self.isReadingPackets = true
-                self.readTunnel(packetFlow: self.packetFlow)
+            // Start reading packets if not already started
+            if !self.isReadingPackets {
+                DispatchQueue.global(qos: .background).async { [weak self] in
+                    guard let self = self else { return }
+                    self.isReadingPackets = true
+                    self.readTunnel(packetFlow: self.packetFlow)
+                }
             }
         }
     }
@@ -208,6 +268,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             } else {
                 completionHandler?(nil)
             }
+            
+        case "getNetworkInfo":
+            // Return network information including virtual IP
+            var networkInfo: [String: Any] = [:]
+            if let privateIP = tunnelPrivateIP {
+                networkInfo["virtualIP"] = privateIP
+            }
+            if let gateway = tunnelGateway {
+                networkInfo["gateway"] = gateway
+            }
+            if let mask = tunnelMask {
+                networkInfo["mask"] = mask
+            }
+            let response = try? JSONSerialization.data(withJSONObject: networkInfo)
+            completionHandler?(response)
             
         default:
             completionHandler?(nil)

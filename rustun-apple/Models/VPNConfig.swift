@@ -13,7 +13,7 @@ struct VPNConfig: Codable, Identifiable {
     var keepaliveInterval: Int
     
     enum CodingKeys: String, CodingKey {
-        case name, serverAddress, serverPort, identity, cryptoType, cryptoKey, enableP2P, keepaliveInterval
+        case id, name, serverAddress, serverPort, identity, cryptoType, cryptoKey, enableP2P, keepaliveInterval
     }
     
     init(id: UUID = UUID(),

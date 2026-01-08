@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "ic_launcher_1024_1024.png",
+      "filename" : "icon 1.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -74,6 +74,7 @@
       "size" : "512x512"
     },
     {
+      "filename" : "icon.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "512x512"
