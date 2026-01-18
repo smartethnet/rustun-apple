@@ -1,5 +1,7 @@
 import Foundation
+import NetworkExtension
 import os.log
+import Network
 
 enum LogLevel: String {
     case debug = "DEBUG"
@@ -56,6 +58,48 @@ func prefixLengthToSubnetMask(prefixLength: Int) -> String {
         mask >>= 8
     }
     return parts.joined(separator: ".")
+}
+
+func maskToPrefix(_ mask: String) -> Int {
+    let parts = mask.split(separator: ".")
+    guard parts.count == 4,
+          let m0 = UInt8(parts[0]),
+          let m1 = UInt8(parts[1]),
+          let m2 = UInt8(parts[2]),
+          let m3 = UInt8(parts[3]) else {
+        return 32
+    }
+    
+    let maskValue = (UInt32(m0) << 24) | (UInt32(m1) << 16) | (UInt32(m2) << 8) | UInt32(m3)
+    
+    // Count 1s in mask to get prefix length
+    var prefixLength = 0
+    var m = maskValue
+    while m != 0 {
+        prefixLength += 1
+        m &= (m - 1) // Clear the rightmost 1 bit
+    }
+    
+    return prefixLength
+}
+
+func parseSubnetMask(_ mask: String) -> String {
+    if mask.contains(".") {
+        return mask
+    }
+    
+    if let prefixLength = Int(mask), prefixLength >= 0 && prefixLength <= 32 {
+        return prefixLengthToSubnetMask(prefixLength: prefixLength)
+    }
+    
+    return prefixLengthToSubnetMask(prefixLength: 32)
+}
+
+func parseCIDRRoute(_ cidr: String) -> NEIPv4Route? {
+    guard let (ip, mask) = parseCIDR(cidr: cidr) else {
+        return nil
+    }
+    return NEIPv4Route(destinationAddress: ip, subnetMask: mask)
 }
 
 /// 将 UInt32 IP 转换为字符串

@@ -15,6 +15,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private var handshakeReply: HandshakeReplyFrame?
     private var currentPeers: [PeerDetail] = []
     private var currentCIDRs: Set<String> = [] // Track current CIDRs for route management
+    private var p2pService: P2PService?
     
     // Network configuration from handshake (doesn't change after initial setup)
     private var tunnelGateway: String?
@@ -31,7 +32,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         
         // Get configuration from protocolConfiguration
         guard let protocolConfig = protocolConfiguration as? NETunnelProviderProtocol,
-              let providerConfig = protocolConfig.providerConfiguration as? [String: Any] else {
+              let providerConfig = protocolConfig.providerConfiguration else {
             let error = NSError(domain: "PacketTunnelProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid protocol configuration"])
             log(.error, "Invalid protocol configuration")
             completionHandler(error)
@@ -51,23 +52,26 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         
         let keepaliveInterval = providerConfig["keepaliveInterval"] as? Int ?? 10
+        let p2pPort = 51820 // 默认 P2P UDP 端口
         let cryptoConfig = "\(cryptoType):\(cryptoKey)"
         
         log(.info, "Connecting to rustun server: \(serverAddress):\(serverPort)")
         log(.info, "Identity: \(identity)")
+        log(.info, "P2P UDP port: \(p2pPort)")
         
-        // Create rustun client
+        // Create crypto block (shared by RustunClient and P2PService)
+        let cryptoTypeEnum = CryptoType.from(config: cryptoConfig)
+        let cryptoBlock = createCryptoBlock(from: cryptoTypeEnum)
+        
+        // Create rustun client with P2P port
         let client = RustunClient(
             serverAddress: serverAddress,
             serverPort: UInt16(serverPort),
             identity: identity,
-            cryptoConfig: cryptoConfig,
-            keepaliveInterval: TimeInterval(keepaliveInterval)
+            cryptoBlock: cryptoBlock,
+            keepaliveInterval: TimeInterval(keepaliveInterval),
+            p2pPort: UInt16(p2pPort)
         )
-        
-        // Setup callbacks
-        var connectionCompletionHandler: ((Error?) -> Void)? = completionHandler
-    
         
         client.onHandshakeReply = { [weak self] reply in
             guard let self = self else { return }
@@ -85,6 +89,18 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         
         self.rustunClient = client
+        let p2pService = P2PService(identity: identity, cryptoBlock: cryptoBlock)
+        p2pService.onDataFrameReceived = { [weak self] dataFrame in
+            self?.handleDataFrame(dataFrame)
+        }
+        self.p2pService = p2pService
+        p2pService.startListening(on: UInt16(p2pPort)) { [weak self] error in
+            if let error = error {
+                log(.error, "Failed to start P2P service: \(error.localizedDescription)")
+            } else {
+                log(.info, "P2P service started successfully on port \(p2pPort)")
+            }
+        }
         
         // Set temporary tunnel settings first (required by Network Extension)
         let tempSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: serverAddress)
@@ -94,11 +110,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         tempSettings.mtu = 1430
         
         setTunnelNetworkSettings(tempSettings) { [weak self] error in
-            guard let self = self else {
-                completionHandler(NSError(domain: "PacketTunnelProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Self is nil"]))
-                return
-            }
-            
             if let error = error {
                 log(.error, "Failed to set temporary tunnel settings: \(error.localizedDescription)")
                 completionHandler(error)
@@ -112,8 +123,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     completionHandler(error)
                 }
             })
-            // Handshake reply will update the tunnel settings and complete the connection
-            // For now, we complete immediately and let handshake reply update settings
             completionHandler(nil)
         }
     }
@@ -122,12 +131,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         log(.info, "Received handshake reply: privateIP=\(reply.privateIP), gateway=\(reply.gateway)")
         self.handshakeReply = reply
         
-        // Store network configuration (these don't change after handshake)
         self.tunnelGateway = reply.gateway
         self.tunnelPrivateIP = reply.privateIP
         self.tunnelMask = reply.mask
-        
         self.currentPeers = reply.peerDetails
+        
+        p2pService?.rewritePeers(reply.peerDetails)
         
         // Extract and store initial CIDRs
         var initialCIDRs: Set<String> = []
@@ -136,15 +145,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         self.currentCIDRs = initialCIDRs
         log(.info, "Initial peers: \(reply.peerDetails.count) peers, CIDRs: \(initialCIDRs.count)")
-        
-        // Configure tunnel network settings based on handshake reply
         updateTunnelRoutes()
     }
     
     private func handleKeepAlive(_ keepAlive: KeepAliveFrame) {
         log(.debug, "Received keepalive: \(keepAlive.peerDetails.count) peers")
         
-        // Extract new CIDRs from keepalive
+        p2pService?.insertOrUpdatePeers(keepAlive.peerDetails)
+        
         var newCIDRs: Set<String> = []
         for peer in keepAlive.peerDetails {
             newCIDRs.formUnion(peer.ciders)
@@ -178,22 +186,25 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         
-        // Create new tunnel settings
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: gateway)
         
-        // Parse subnet mask
         let mask = parseSubnetMask(maskString)
+        let prefix = maskToPrefix(mask)
         let ipv4Settings = NEIPv4Settings(addresses: [privateIP], subnetMasks: [mask])
         
-        // Build routes list
         var routes: [NEIPv4Route] = []
         
-        // Add route to gateway
-        if let gatewayRoute = createRoute(to: gateway, mask: mask) {
-            routes.append(gatewayRoute)
-        }
+        var addr = in_addr()
+        inet_pton(AF_INET, String(gateway), &addr)
+        var ipInt = UInt32(bigEndian: addr.s_addr) - 1
+        routes.append(NEIPv4Route(destinationAddress: convertToIP(ipInt), subnetMask: prefixLengthToSubnetMask(prefixLength: prefix)))
         
-        // Add routes for all current CIDRs
+//        let privateCidr = String(format: "%s/%d", gateway, prefix)
+//        if let route = parseCIDRRoute(privateCidr) {
+//            log(.info, "Adding route to gateway: \(privateCidr) \(route.destinationAddress) \(route.destinationSubnetMask)")
+//            routes.append(route)
+//        }
+        
         for cidr in currentCIDRs {
             if let route = parseCIDRRoute(cidr) {
                 routes.append(route)
@@ -244,6 +255,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         rustunClient?.close()
         rustunClient = nil
         
+        // Stop P2P service
+        p2pService?.stop()
+        p2pService = nil
+        
         completionHandler()
     }
     
@@ -261,9 +276,40 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             completionHandler?(response)
             
         case "getPeers":
-            // Return current peers list
+            // Return current peers list with lastActive and isP2P from P2PService
+            let p2pLastActive = p2pService?.getAllPeersLastActive() ?? [:]
+            let activeThreshold: TimeInterval = 15.0 // P2P active threshold in seconds
+            let now = Date().timeIntervalSince1970
+            
+            // Update peers with lastActive and isP2P from P2PService
+            let updatedPeers = currentPeers.map { peer -> PeerDetail in
+                // Get lastActive from P2PService only, use 0 if not available
+                let lastActive = p2pLastActive[peer.identity] ?? 0
+                
+                // Calculate isP2P: lastActive > 0, elapsed < activeThreshold, and has IPv6 info
+                let isP2P: Bool
+                if lastActive > 0 {
+                    let elapsed = now - TimeInterval(lastActive)
+                    isP2P = elapsed < activeThreshold && !peer.ipv6.isEmpty && peer.port > 0
+                } else {
+                    isP2P = false
+                }
+                
+                return PeerDetail(
+                    identity: peer.identity,
+                    privateIP: peer.privateIP,
+                    ciders: peer.ciders,
+                    ipv6: peer.ipv6,
+                    port: peer.port,
+                    stunIP: peer.stunIP,
+                    stunPort: peer.stunPort,
+                    lastActive: peer.lastActive,
+                    isP2P: isP2P
+                )
+            }
+            
             let encoder = JSONEncoder()
-            if let peersData = try? encoder.encode(currentPeers) {
+            if let peersData = try? encoder.encode(updatedPeers) {
                 completionHandler?(peersData)
             } else {
                 completionHandler?(nil)
@@ -330,13 +376,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     
     // MARK: - Packet Handling
     
-    /// 处理接收到的数据包
     private func handlePacket(_ packet: Data) {
         guard packet.count >= 20 else {
             return
         }
         
-        // 解析 IP 包头
         let version = (packet[0] >> 4) & 0x0F
         let headerLength = Int((packet[0] & 0x0F) * 4)
         
@@ -366,60 +410,35 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // 记录数据包信息
         log(.debug, "📦 Received packet: \(packet.count) bytes, IP v\(version), \(srcIP) -> \(dstIP), Protocol: \(protocolName), Total Length: \(totalLength)")
         
-        // Send packet to rustun server
-        do {
-            try rustunClient?.sendData(packet)
-        } catch {
-            log(.error, "Failed to send packet to server: \(error.localizedDescription)")
+        // Try P2P first, then fallback to relay
+        var sentViaP2P = false
+        
+         if let p2pService = p2pService,
+            let peer = p2pService.findPeerByDestinationIP(dstIP) {
+             // Try sending via P2P
+             if p2pService.sendPacket(packet, to: peer) {
+                 sentViaP2P = true
+                 log(.debug, "📤 Sent packet to \(dstIP) via P2P (peer: \(peer.identity))")
+             } else {
+                 log(.debug, "⚠️ P2P send failed for \(dstIP), falling back to relay")
+             }
+         }
+        
+        // If P2P failed or no peer found, use relay
+        if !sentViaP2P {
+            do {
+                try rustunClient?.sendData(packet)
+                log(.debug, "📤 Sent packet to \(dstIP) via relay")
+            } catch {
+                log(.error, "Failed to send packet to server: \(error.localizedDescription)")
+            }
         }
     }
     
-    /// 写入数据包到虚拟网卡
-    /// 这个方法用于将从 rustun server 接收到的数据包写入虚拟网卡
     private func writePacket(_ packet: Data, p: NSNumber) {
         packetFlow.writePackets([packet], withProtocols: [p])
-        
-        // 更新发送统计
         stats["txPackets"]? += 1
         stats["txBytes"]? += UInt64(packet.count)
     }
     
-    // MARK: - Helper Methods
-    
-    private func parseSubnetMask(_ mask: String) -> String {
-        // If mask is already in dotted decimal format, return it
-        if mask.contains(".") {
-            return mask
-        }
-        
-        // If mask is prefix length, convert to dotted decimal
-        if let prefixLength = Int(mask), prefixLength >= 0 && prefixLength <= 32 {
-            let maskValue: UInt32 = (0xFFFFFFFF << (32 - prefixLength)) & 0xFFFFFFFF
-            let a = (maskValue >> 24) & 0xFF
-            let b = (maskValue >> 16) & 0xFF
-            let c = (maskValue >> 8) & 0xFF
-            let d = maskValue & 0xFF
-            return "\(a).\(b).\(c).\(d)"
-        }
-        
-        // Default to /24
-        return "255.255.255.0"
-    }
-    
-    private func createRoute(to destination: String, mask: String) -> NEIPv4Route? {
-        return NEIPv4Route(destinationAddress: destination, subnetMask: mask)
-    }
-    
-    private func parseCIDRRoute(_ cidr: String) -> NEIPv4Route? {
-        let components = cidr.split(separator: "/")
-        guard components.count == 2,
-              let prefixLength = Int(components[1]),
-              prefixLength >= 0 && prefixLength <= 32 else {
-            return nil
-        }
-        
-        let ip = String(components[0])
-        let mask = parseSubnetMask(String(prefixLength))
-        return NEIPv4Route(destinationAddress: ip, subnetMask: mask)
-    }
 }

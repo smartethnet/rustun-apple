@@ -10,6 +10,7 @@ struct PeerDetail: Codable, Identifiable {
     let stunIP: String
     let stunPort: UInt16
     let lastActive: UInt64
+    let isP2P: Bool
     
     enum CodingKeys: String, CodingKey {
         case identity
@@ -20,6 +21,7 @@ struct PeerDetail: Codable, Identifiable {
         case stunIP = "stun_ip"
         case stunPort = "stun_port"
         case lastActive = "last_active"
+        case isP2P = "is_p2p"
     }
     
     init(from decoder: Decoder) throws {
@@ -32,6 +34,8 @@ struct PeerDetail: Codable, Identifiable {
         stunIP = try container.decode(String.self, forKey: .stunIP)
         stunPort = try container.decode(UInt16.self, forKey: .stunPort)
         lastActive = try container.decode(UInt64.self, forKey: .lastActive)
+        // Decode isP2P, default to false if not present (for backward compatibility)
+        isP2P = try container.decodeIfPresent(Bool.self, forKey: .isP2P) ?? false
         // Use identity as id for Identifiable
         id = identity
     }
@@ -46,6 +50,7 @@ struct PeerDetail: Codable, Identifiable {
         try container.encode(stunIP, forKey: .stunIP)
         try container.encode(stunPort, forKey: .stunPort)
         try container.encode(lastActive, forKey: .lastActive)
+        try container.encode(isP2P, forKey: .isP2P)
     }
 }
 

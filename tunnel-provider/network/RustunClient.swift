@@ -15,6 +15,7 @@ class RustunClient {
     private let identity: String
     private let cryptoBlock: CryptoBlock
     private let keepaliveInterval: TimeInterval
+    private let p2pPort: UInt16
     
     private var session: Session?
     
@@ -23,14 +24,16 @@ class RustunClient {
     var onKeepAlive: ((KeepAliveFrame) -> Void)?
     var onDisconnected: (() -> Void)?
     
-    init(serverAddress: String, serverPort: UInt16, identity: String, cryptoConfig: String, keepaliveInterval: TimeInterval = 10) {
+    init(serverAddress: String, serverPort: UInt16,
+         identity: String, cryptoBlock: CryptoBlock,
+         keepaliveInterval: TimeInterval = 10,
+         p2pPort: UInt16 = 0) {
         self.serverAddress = serverAddress
         self.serverPort = serverPort
         self.identity = identity
+        self.cryptoBlock = cryptoBlock
         self.keepaliveInterval = keepaliveInterval
-        
-        let cryptoType = CryptoType.from(config: cryptoConfig)
-        self.cryptoBlock = createCryptoBlock(from: cryptoType)
+        self.p2pPort = p2pPort
     }
     
     func run(onReady: @escaping (Error?) -> Void) {
@@ -44,7 +47,8 @@ class RustunClient {
             socket: socket,
             identity: identity,
             cryptoBlock: cryptoBlock,
-            keepaliveInterval: keepaliveInterval
+            keepaliveInterval: keepaliveInterval,
+            p2pPort: p2pPort
         )
         
         self.session = session

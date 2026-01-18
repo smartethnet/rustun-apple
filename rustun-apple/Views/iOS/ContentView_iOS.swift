@@ -59,7 +59,7 @@ struct PeersTab: View {
                 identity: peer.identity,
                 privateIP: peer.privateIP,
                 cidrs: peer.ciders,
-                isP2P: !peer.ipv6.isEmpty && peer.port > 0,
+                isP2P: peer.isP2P,
                 lastActive: peer.lastActive
             )
         }
